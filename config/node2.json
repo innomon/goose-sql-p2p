@@ -1,0 +1,18 @@
+{
+  "node_id": "node-macos-m4",
+  "swarm_topic": "sqlite-p2p-e2e-cluster",
+  "swarm_port": 0,
+  "bootstrap": [
+    "127.0.0.1:43219"
+  ],
+  "peer_addrs": [],
+  "db_path": "data/node2.db",
+  "enable_wal": true,
+  "enable_crypto": false,
+  "auto_sync": true,
+  "replication": {
+    "mode": "all",
+    "whitelist": [],
+    "blacklist": []
+  }
+}

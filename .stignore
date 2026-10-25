@@ -1,0 +1,32 @@
+// Syncthing Ignore Patterns for goose-sql-p2p
+
+// Binaries and build artifacts
+bin
+build_*.c
+*.o
+*.a
+*.so
+
+// SQLite runtime databases and locks
+data/*.db
+data/*.db-wal
+data/*.db-shm
+*.db
+*.db-wal
+*.db-shm
+
+// Logs and temporary test runs
+*.log
+/tmp/goose_p2p_test_*
+
+// Syncthing temporary and conflict files
+(?d).syncthing.*
+(?d).stversions
+(?d)~*
+(?d)*.tmp
+
+// OS and editor metadata
+(?d).DS_Store
+(?d)Thumbs.db
+.idea
+.vscode

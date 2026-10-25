@@ -1,0 +1,23 @@
+# Binaries and compiled targets
+bin/
+build_*.c
+*.o
+*.a
+*.so
+
+# SQLite runtime and database files
+data/*.db
+data/*.db-wal
+data/*.db-shm
+*.db
+*.db-wal
+*.db-shm
+
+# Test artifacts and logs
+*.log
+/tmp/goose_p2p_test_*
+
+# IDE and OS files
+.DS_Store
+.idea/
+.vscode/

@@ -24,10 +24,12 @@ fn print_help() {
     print("  get / /get <key>                - Get record by key");
     print("  del / /del <key>                - Delete record by key");
     print("  list / /list [prefix]           - List all keys or keys starting with prefix");
+    print("  sql / /sql [-f <fmt>] <query>   - Execute raw SQL directly (formats: json, table, csv)");
     print("  sync / /sync                    - Trigger immediate replication sync with peers");
     print("  peers / /peers                  - Display active peer connections");
     print("  feed / /feed                    - View local append-only changeset feed");
     print("  status / /status                - Display node status and configuration");
+    print("  mcp / /mcp                      - Run in Model Context Protocol (MCP) STDIO server mode");
     print("  help / /help                    - Display this help message");
     print("  exit / /exit, quit / /quit      - Exit goose-sql-p2p");
 }
@@ -47,8 +49,9 @@ fn execute_command(ctx: AppContext&, line: const u8[:]) -> bool {
     }
     trimmed.append(line[start..end]);
 
-    // Parse words as slices
+    // Parse words as slices and track start offsets
     var words: u8[:][>..] = [];
+    var word_starts: i64[>..] = [];
     var p = 0;
     while p < trimmed.len {
         while p < trimmed.len && (trimmed[p] == ' ' || trimmed[p] == '\t') {
@@ -62,6 +65,7 @@ fn execute_command(ctx: AppContext&, line: const u8[:]) -> bool {
             p++;
         }
         words.push(trimmed[word_start..p]);
+        word_starts.push(word_start);
     }
 
     if words.len == 0 {
@@ -103,6 +107,51 @@ fn execute_command(ctx: AppContext&, line: const u8[:]) -> bool {
 
     if cmd_name == "peers" {
         print("Active Peer Count: ", ctx.rep.peer_fds.len);
+        return true;
+    }
+
+    if cmd_name == "sql" {
+        if words.len < 2 {
+            print("Usage: sql [--format json|table|csv] <query>");
+            return false;
+        }
+        var fmt_str: u8[>..] = [];
+        fmt_str.append("json");
+        var sql_start_idx = 1;
+
+        while sql_start_idx < words.len {
+            var w = words[sql_start_idx];
+            if w.len >= 9 && w[0..9] == "--format=" {
+                fmt_str.clear();
+                fmt_str.append(w[9..]);
+                sql_start_idx++;
+            } else if w.len >= 3 && w[0..3] == "-f=" {
+                fmt_str.clear();
+                fmt_str.append(w[3..]);
+                sql_start_idx++;
+            } else if w == "--format" || w == "-f" {
+                if sql_start_idx + 1 < words.len {
+                    fmt_str.clear();
+                    fmt_str.append(words[sql_start_idx + 1]);
+                    sql_start_idx += 2;
+                } else {
+                    print("Usage: sql [--format json|table|csv] <query>");
+                    return false;
+                }
+            } else {
+                break;
+            }
+        }
+
+        if sql_start_idx >= words.len {
+            print("Usage: sql [--format json|table|csv] <query>");
+            return false;
+        }
+
+        var raw_sql = trimmed[word_starts[sql_start_idx]..trimmed.len];
+        var out_res: u8[>..] = [];
+        db::query_raw(ctx.db_handle, raw_sql, fmt_str, out_res);
+        print(out_res);
         return true;
     }
 

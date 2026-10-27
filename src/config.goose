@@ -163,6 +163,8 @@ fn parse_args(cfg: types::NodeConfig&, out_bootstrap: u8[..128][>..]&, out_peers
                 out_cmd.clear();
                 arg(i, out_cmd);
             }
+        } else if a == "-mcp" || a == "--mcp" || a == "mcp" {
+            cfg.mcp_mode = true;
         }
         i++;
     }

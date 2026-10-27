@@ -111,9 +111,23 @@ SQLite Database (WAL Mode)
 
 ---
 
-## 4. Verification & Testing
+## 4. Arbitrary SQL Execution Engine & Formatters
+
+- **Goose Module**: [`src/db.goose`](src/db.goose) (`db::query_raw`), [`src/cli.goose`](src/cli.goose)
+- **C Native Bridge**: [`csrc/bridge.c`](csrc/bridge.c) (`gs_db_query_raw`)
+- **Capabilities**:
+  - Direct execution of raw SQL queries (SELECT, PRAGMA, EXPLAIN) and mutation/DDL statements (INSERT, UPDATE, DELETE, CREATE TABLE, ALTER TABLE).
+  - DDL / DML commands return standard JSON status metadata (`{"status":"ok","rows_affected":N}`) or plaintext summary depending on format.
+  - Multi-Format Rendering:
+    - **JSON** (`-f json`, `--format=json`, default): Structured JSON array of objects with automatic type conversion for integers, floats, nulls, and strings.
+    - **ASCII Table** (`-f table`, `--format=table`): Tabular output with dynamic column width calculation, padding, column headers, and grid separators (`+---+---+`).
+    - **CSV** (`-f csv`, `--format=csv`): Comma-separated values with column header row and RFC-4180 quote escaping for string fields containing commas or quotes.
+
+---
+
+## 5. Verification & Testing
 
 The replication engine and protocol stack are validated via:
 
-1. **Unit Test Suite** ([`src/unit_test.goose`](src/unit_test.goose)): Validates crypto primitives, JSON parsing, SQLite C bindings, LWW consensus logic, and Hypercore append logs against an in-memory SQLite database.
-2. **E2E & Cross-Replication Test** ([`scripts/cross-replication-test.sh`](scripts/cross-replication-test.sh)): Spins up multiple independent nodes across separate ports and verifies bidirectional data synchronization, tombstone deletion propagation, and state convergence.
+1. **Unit Test Suite** ([`src/unit_test.goose`](src/unit_test.goose)): Validates crypto primitives, JSON parsing, SQLite C bindings, LWW consensus logic, Hypercore append logs, and the arbitrary SQL engine (JSON, Table, CSV, DDL/DML, error handling) against an in-memory SQLite database.
+2. **E2E & Cross-Replication Test** ([`scripts/cross-replication-test.sh`](scripts/cross-replication-test.sh)): Spins up multiple independent nodes across separate ports and verifies bidirectional data synchronization, tombstone deletion propagation, state convergence, and multi-format SQL execution.

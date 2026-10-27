@@ -8,7 +8,7 @@ BIN_DIR = bin
 TARGET = $(BIN_DIR)/goose-sql-p2p
 TEST_BIN = $(BIN_DIR)/unit_test
 
-.PHONY: all clean test unit_test
+.PHONY: all clean test unit_test mcp_test
 
 all: $(TARGET) $(TEST_BIN)
 
@@ -27,8 +27,13 @@ $(TEST_BIN): src/*.goose csrc/*.c csrc/*.h
 unit_test: $(TEST_BIN)
 	$(TEST_BIN)
 
+mcp_test: $(TARGET)
+	./scripts/mcp-test.sh
+
 clean:
 	rm -f build_main.c build_unit.c $(TARGET) $(TEST_BIN) data/*.db data/*.db-wal data/*.db-shm
 
-test: $(TARGET)
+test: $(TARGET) $(TEST_BIN)
+	$(TEST_BIN)
+	./scripts/mcp-test.sh
 	./scripts/cross-replication-test.sh

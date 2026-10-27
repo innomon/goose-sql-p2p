@@ -17,6 +17,7 @@ int32_t gs_db_put(uint64_t handle, sl_u8 key, sl_u8 meta, sl_u8 data);
 int32_t gs_db_get(uint64_t handle, sl_u8 key, gs_rref out_meta, gs_rref out_data);
 int32_t gs_db_delete(uint64_t handle, sl_u8 key);
 int32_t gs_db_list(uint64_t handle, sl_u8 prefix, int32_t limit, int32_t offset, gs_rref out_json);
+int32_t gs_db_query_raw(uint64_t handle, sl_u8 sql, sl_u8 format, gs_rref out_result);
 
 /* Cryptography Bridge */
 int32_t gs_crypt_gen_key(gs_rref out_key);
@@ -39,6 +40,11 @@ int32_t gs_sock_recv_udp(int32_t fd, int32_t timeout_ms, gs_rref out_data, gs_rr
 /* System Utilities */
 int64_t gs_time_now_ns(void);
 void gs_sleep_ms(int32_t ms);
+
+/* Stdio & MCP Bridge */
+int32_t gs_stdio_readline(gs_rref out_line);
+void gs_stdio_write_stdout(sl_u8 data);
+void gs_stdio_write_stderr(sl_u8 data);
 
 #ifdef __cplusplus
 }

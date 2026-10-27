@@ -11,6 +11,7 @@ import config;
 import feed;
 import replicator;
 import cli;
+import mcp;
 
 fn main() {
     var cfg = config::default_config();
@@ -50,6 +51,14 @@ fn main() {
         rep: rep,
         should_exit: false
     };
+
+    // If MCP server mode is enabled, run STDIO JSON-RPC event loop
+    if cfg.mcp_mode {
+        mcp::run_stdio_server(app_ctx);
+        replicator::close_replicator(app_ctx.rep);
+        db::close(db_handle);
+        return;
+    }
 
     // If one-shot command is supplied via -cmd, execute it and exit
     if one_shot_cmd.len > 0 {

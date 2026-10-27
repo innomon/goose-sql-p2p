@@ -267,6 +267,280 @@ int32_t gs_db_list(uint64_t handle, sl_u8 prefix, int32_t limit, int32_t offset,
     return SQLITE_OK;
 }
 
+/* Raw SQL Query and Execution with JSON, ASCII Table, and CSV formatters */
+int32_t gs_db_query_raw(uint64_t handle, sl_u8 sql, sl_u8 format, gs_rref out_result) {
+    if (!handle || sql.len == 0 || !sql.data) return -1;
+    sqlite3 *db = (sqlite3 *)(uintptr_t)handle;
+
+    int fmt_mode = 0; // 0 = JSON, 1 = TABLE, 2 = CSV
+    if (format.len >= 3) {
+        if (format.len >= 5 && strncmp((const char *)format.data, "table", 5) == 0) fmt_mode = 1;
+        else if (strncmp((const char *)format.data, "tab", 3) == 0) fmt_mode = 1;
+        else if (strncmp((const char *)format.data, "csv", 3) == 0) fmt_mode = 2;
+    }
+
+    char *csql = sl_to_cstr(sql);
+    if (!csql) return -1;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, csql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        const char *err = sqlite3_errmsg(db);
+        if (fmt_mode == 0) {
+            char err_json[512];
+            snprintf(err_json, sizeof(err_json), "{\"status\":\"error\",\"error\":\"%s\"}", err ? err : "unknown error");
+            gs_bld_append(out_result, (const uint8_t *)err_json, strlen(err_json));
+        } else {
+            char err_txt[512];
+            snprintf(err_txt, sizeof(err_txt), "Error: %s", err ? err : "unknown error");
+            gs_bld_append(out_result, (const uint8_t *)err_txt, strlen(err_txt));
+        }
+        free(csql);
+        return rc;
+    }
+
+    int num_cols = sqlite3_column_count(stmt);
+
+    if (num_cols == 0) {
+        // DDL / DML non-query statement
+        int total_before = sqlite3_total_changes(db);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+            const char *err = sqlite3_errmsg(db);
+            if (fmt_mode == 0) {
+                char err_json[512];
+                snprintf(err_json, sizeof(err_json), "{\"status\":\"error\",\"error\":\"%s\"}", err ? err : "execution error");
+                gs_bld_append(out_result, (const uint8_t *)err_json, strlen(err_json));
+            } else {
+                char err_txt[512];
+                snprintf(err_txt, sizeof(err_txt), "Error: %s", err ? err : "execution error");
+                gs_bld_append(out_result, (const uint8_t *)err_txt, strlen(err_txt));
+            }
+            sqlite3_finalize(stmt);
+            free(csql);
+            return rc;
+        }
+
+        int changes = sqlite3_total_changes(db) - total_before;
+        if (fmt_mode == 0) {
+            char res_json[128];
+            snprintf(res_json, sizeof(res_json), "{\"status\":\"ok\",\"rows_affected\":%d}", changes);
+            gs_bld_append(out_result, (const uint8_t *)res_json, strlen(res_json));
+        } else if (fmt_mode == 1) {
+            char res_tbl[128];
+            snprintf(res_tbl, sizeof(res_tbl), "OK: %d row(s) affected.", changes);
+            gs_bld_append(out_result, (const uint8_t *)res_tbl, strlen(res_tbl));
+        } else {
+            char res_csv[128];
+            snprintf(res_csv, sizeof(res_csv), "status,rows_affected\nok,%d", changes);
+            gs_bld_append(out_result, (const uint8_t *)res_csv, strlen(res_csv));
+        }
+
+        sqlite3_finalize(stmt);
+        free(csql);
+        return SQLITE_OK;
+    }
+
+    // Query returning rows
+    if (fmt_mode == 0) {
+        // JSON format
+        gs_bld_append(out_result, (const uint8_t *)"[", 1);
+        int row_count = 0;
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            if (row_count > 0) {
+                gs_bld_append(out_result, (const uint8_t *)",", 1);
+            }
+            gs_bld_append(out_result, (const uint8_t *)"{", 1);
+            for (int col = 0; col < num_cols; col++) {
+                if (col > 0) {
+                    gs_bld_append(out_result, (const uint8_t *)",", 1);
+                }
+                const char *col_name = sqlite3_column_name(stmt, col);
+                gs_bld_append(out_result, (const uint8_t *)"\"", 1);
+                if (col_name) gs_bld_append(out_result, (const uint8_t *)col_name, strlen(col_name));
+                gs_bld_append(out_result, (const uint8_t *)"\":", 2);
+
+                int type = sqlite3_column_type(stmt, col);
+                if (type == SQLITE_NULL) {
+                    gs_bld_append(out_result, (const uint8_t *)"null", 4);
+                } else if (type == SQLITE_INTEGER) {
+                    sqlite3_int64 ival = sqlite3_column_int64(stmt, col);
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "%lld", (long long)ival);
+                    gs_bld_append(out_result, (const uint8_t *)buf, strlen(buf));
+                } else if (type == SQLITE_FLOAT) {
+                    double fval = sqlite3_column_double(stmt, col);
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "%g", fval);
+                    gs_bld_append(out_result, (const uint8_t *)buf, strlen(buf));
+                } else {
+                    const char *tval = (const char *)sqlite3_column_text(stmt, col);
+                    int tlen = sqlite3_column_bytes(stmt, col);
+                    gs_bld_append(out_result, (const uint8_t *)"\"", 1);
+                    if (tval && tlen > 0) {
+                        for (int i = 0; i < tlen; i++) {
+                            char c = tval[i];
+                            if (c == '"') gs_bld_append(out_result, (const uint8_t *)"\\\"", 2);
+                            else if (c == '\\') gs_bld_append(out_result, (const uint8_t *)"\\\\", 2);
+                            else if (c == '\n') gs_bld_append(out_result, (const uint8_t *)"\\n", 2);
+                            else if (c == '\r') gs_bld_append(out_result, (const uint8_t *)"\\r", 2);
+                            else if (c == '\t') gs_bld_append(out_result, (const uint8_t *)"\\t", 2);
+                            else gs_bld_append(out_result, (const uint8_t *)&c, 1);
+                        }
+                    }
+                    gs_bld_append(out_result, (const uint8_t *)"\"", 1);
+                }
+            }
+            gs_bld_append(out_result, (const uint8_t *)"}", 1);
+            row_count++;
+        }
+        gs_bld_append(out_result, (const uint8_t *)"]", 1);
+    } else if (fmt_mode == 2) {
+        // CSV format
+        // Header
+        for (int col = 0; col < num_cols; col++) {
+            if (col > 0) gs_bld_append(out_result, (const uint8_t *)",", 1);
+            const char *col_name = sqlite3_column_name(stmt, col);
+            if (col_name) gs_bld_append(out_result, (const uint8_t *)col_name, strlen(col_name));
+        }
+        gs_bld_append(out_result, (const uint8_t *)"\n", 1);
+
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            for (int col = 0; col < num_cols; col++) {
+                if (col > 0) gs_bld_append(out_result, (const uint8_t *)",", 1);
+                int type = sqlite3_column_type(stmt, col);
+                if (type == SQLITE_NULL) {
+                    // empty
+                } else if (type == SQLITE_INTEGER) {
+                    sqlite3_int64 ival = sqlite3_column_int64(stmt, col);
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "%lld", (long long)ival);
+                    gs_bld_append(out_result, (const uint8_t *)buf, strlen(buf));
+                } else if (type == SQLITE_FLOAT) {
+                    double fval = sqlite3_column_double(stmt, col);
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "%g", fval);
+                    gs_bld_append(out_result, (const uint8_t *)buf, strlen(buf));
+                } else {
+                    const char *tval = (const char *)sqlite3_column_text(stmt, col);
+                    int tlen = sqlite3_column_bytes(stmt, col);
+                    gs_bld_append(out_result, (const uint8_t *)"\"", 1);
+                    if (tval && tlen > 0) {
+                        for (int i = 0; i < tlen; i++) {
+                            char c = tval[i];
+                            if (c == '"') gs_bld_append(out_result, (const uint8_t *)"\"\"", 2);
+                            else gs_bld_append(out_result, (const uint8_t *)&c, 1);
+                        }
+                    }
+                    gs_bld_append(out_result, (const uint8_t *)"\"", 1);
+                }
+            }
+            gs_bld_append(out_result, (const uint8_t *)"\n", 1);
+        }
+    } else {
+        // ASCII Table format
+        // Buffer rows in dynamic array of string cells to compute widths
+        int max_cols = num_cols < 64 ? num_cols : 64;
+        int col_widths[64];
+        for (int c = 0; c < max_cols; c++) {
+            const char *cn = sqlite3_column_name(stmt, c);
+            col_widths[c] = cn ? (int)strlen(cn) : 4;
+            if (col_widths[c] < 4) col_widths[c] = 4;
+        }
+
+        struct RowData {
+            char *cells[64];
+        };
+        int cap = 128;
+        int row_count = 0;
+        struct RowData *rows = (struct RowData *)malloc(sizeof(struct RowData) * cap);
+
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            if (row_count >= cap) {
+                cap *= 2;
+                rows = (struct RowData *)realloc(rows, sizeof(struct RowData) * cap);
+            }
+            for (int col = 0; col < max_cols; col++) {
+                int type = sqlite3_column_type(stmt, col);
+                char cell_buf[512];
+                if (type == SQLITE_NULL) {
+                    snprintf(cell_buf, sizeof(cell_buf), "NULL");
+                } else if (type == SQLITE_INTEGER) {
+                    snprintf(cell_buf, sizeof(cell_buf), "%lld", (long long)sqlite3_column_int64(stmt, col));
+                } else if (type == SQLITE_FLOAT) {
+                    snprintf(cell_buf, sizeof(cell_buf), "%g", sqlite3_column_double(stmt, col));
+                } else {
+                    const char *t = (const char *)sqlite3_column_text(stmt, col);
+                    snprintf(cell_buf, sizeof(cell_buf), "%s", t ? t : "");
+                }
+                int clen = (int)strlen(cell_buf);
+                if (clen > col_widths[col]) {
+                    if (clen > 60) col_widths[col] = 60; // cap max col width
+                    else col_widths[col] = clen;
+                }
+                rows[row_count].cells[col] = strdup(cell_buf);
+            }
+            row_count++;
+        }
+
+        // Draw top separator
+        gs_bld_append(out_result, (const uint8_t *)"+", 1);
+        for (int c = 0; c < max_cols; c++) {
+            for (int w = 0; w < col_widths[c] + 2; w++) gs_bld_append(out_result, (const uint8_t *)"-", 1);
+            gs_bld_append(out_result, (const uint8_t *)"+", 1);
+        }
+        gs_bld_append(out_result, (const uint8_t *)"\n", 1);
+
+        // Draw headers
+        gs_bld_append(out_result, (const uint8_t *)"|", 1);
+        for (int c = 0; c < max_cols; c++) {
+            const char *cn = sqlite3_column_name(stmt, c);
+            char hbuf[128];
+            snprintf(hbuf, sizeof(hbuf), " %-*s |", col_widths[c], cn ? cn : "");
+            gs_bld_append(out_result, (const uint8_t *)hbuf, strlen(hbuf));
+        }
+        gs_bld_append(out_result, (const uint8_t *)"\n", 1);
+
+        // Draw middle separator
+        gs_bld_append(out_result, (const uint8_t *)"+", 1);
+        for (int c = 0; c < max_cols; c++) {
+            for (int w = 0; w < col_widths[c] + 2; w++) gs_bld_append(out_result, (const uint8_t *)"-", 1);
+            gs_bld_append(out_result, (const uint8_t *)"+", 1);
+        }
+        gs_bld_append(out_result, (const uint8_t *)"\n", 1);
+
+        // Draw rows
+        for (int r = 0; r < row_count; r++) {
+            gs_bld_append(out_result, (const uint8_t *)"|", 1);
+            for (int c = 0; c < max_cols; c++) {
+                char *cell_val = rows[r].cells[c];
+                char cell_fmt[128];
+                snprintf(cell_fmt, sizeof(cell_fmt), " %-*.*s |", col_widths[c], col_widths[c], cell_val ? cell_val : "");
+                gs_bld_append(out_result, (const uint8_t *)cell_fmt, strlen(cell_fmt));
+                if (cell_val) free(cell_val);
+            }
+            gs_bld_append(out_result, (const uint8_t *)"\n", 1);
+        }
+        if (rows) free(rows);
+
+        // Draw bottom separator
+        gs_bld_append(out_result, (const uint8_t *)"+", 1);
+        for (int c = 0; c < max_cols; c++) {
+            for (int w = 0; w < col_widths[c] + 2; w++) gs_bld_append(out_result, (const uint8_t *)"-", 1);
+            gs_bld_append(out_result, (const uint8_t *)"+", 1);
+        }
+        gs_bld_append(out_result, (const uint8_t *)"\n", 1);
+
+        char summary[64];
+        snprintf(summary, sizeof(summary), "(%d row%s)", row_count, row_count == 1 ? "" : "s");
+        gs_bld_append(out_result, (const uint8_t *)summary, strlen(summary));
+    }
+
+    sqlite3_finalize(stmt);
+    free(csql);
+    return SQLITE_OK;
+}
+
 /* ========================================================================= */
 /* Cryptography Bridge Implementation                                        */
 /* ========================================================================= */
@@ -754,4 +1028,42 @@ void gs_sleep_ms(int32_t ms) {
     ts.tv_sec = ms / 1000;
     ts.tv_nsec = (ms % 1000) * 1000000L;
     nanosleep(&ts, NULL);
+}
+
+/* ========================================================================= */
+/* Stdio & MCP Bridge Implementation                                         */
+/* ========================================================================= */
+
+int32_t gs_stdio_readline(gs_rref out_line) {
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t n = getline(&line, &cap, stdin);
+    if (n < 0) {
+        if (line) free(line);
+        return feof(stdin) ? 1 : -1;
+    }
+    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) {
+        line[--n] = '\0';
+    }
+    if (n > 0) {
+        gs_bld_append(out_line, (const uint8_t *)line, (size_t)n);
+    }
+    free(line);
+    return 0;
+}
+
+void gs_stdio_write_stdout(sl_u8 data) {
+    if (data.len > 0 && data.data) {
+        fwrite(data.data, 1, (size_t)data.len, stdout);
+    }
+    fputc('\n', stdout);
+    fflush(stdout);
+}
+
+void gs_stdio_write_stderr(sl_u8 data) {
+    if (data.len > 0 && data.data) {
+        fwrite(data.data, 1, (size_t)data.len, stderr);
+    }
+    fputc('\n', stderr);
+    fflush(stderr);
 }

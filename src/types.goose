@@ -12,7 +12,8 @@ struct NodeConfig {
     encryption_key: u8[..64],
     enable_crypto: bool = false,
     sync_interval_sec: i32 = 2,
-    auto_sync: bool = true
+    auto_sync: bool = true,
+    mcp_mode: bool = false
 }
 
 struct Changeset {

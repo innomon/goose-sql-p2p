@@ -6,6 +6,13 @@ import crypto;
 import json_util;
 import changeset;
 import feed;
+import replicator;
+import cli;
+import mcp;
+
+fn str_contains(haystack: const u8[:], needle: const u8[:]) -> bool {
+    find(haystack, needle) >= 0
+}
 
 fn main() {
     print("=== Running goose-sql-p2p Unit Tests ===");
@@ -145,9 +152,150 @@ fn main() {
     var append_ok = feed::append_changeset(db_handle, 1, "doc:1", "{}", "Doc Content", 3000, feed_cs);
     assert(append_ok);
     assert(feed_cs.prev_hash.len == 64);
+    print("  [PASS] Changeset Feed Append and SHA-256 Log Hashing");
+
+    // 6. Test Raw SQL Query Engine (JSON, Table, CSV, DDL/DML, Errors)
+    print("[TEST 6] Testing Arbitrary SQL Execution Engine...");
+    var sql_res: u8[>..] = [];
+
+    // 6a. DDL CREATE TABLE
+    sql_res.clear();
+    var ddl_ok = db::query_raw(db_handle, "CREATE TABLE sql_test_items (id INT, name TEXT, score REAL);", "json", sql_res);
+    assert(ddl_ok);
+    assert(sql_res == "{\"status\":\"ok\",\"rows_affected\":0}");
+
+    // 6b. DML INSERT
+    sql_res.clear();
+    var ins_ok = db::query_raw(db_handle, "INSERT INTO sql_test_items VALUES (1, 'Alice', 95.5), (2, 'Bob', 88.0);", "json", sql_res);
+    assert(ins_ok);
+    assert(sql_res == "{\"status\":\"ok\",\"rows_affected\":2}");
+
+    // 6c. JSON format SELECT
+    sql_res.clear();
+    var q_json_ok = db::query_raw(db_handle, "SELECT id, name, score FROM sql_test_items ORDER BY id ASC;", "json", sql_res);
+    assert(q_json_ok);
+    assert(sql_res == "[{\"id\":1,\"name\":\"Alice\",\"score\":95.5},{\"id\":2,\"name\":\"Bob\",\"score\":88}]");
+
+    // 6d. ASCII Table format SELECT
+    sql_res.clear();
+    var q_tbl_ok = db::query_raw(db_handle, "SELECT id, name, score FROM sql_test_items ORDER BY id ASC;", "table", sql_res);
+    assert(q_tbl_ok);
+    assert(sql_res.len > 0);
+
+    // 6e. CSV format SELECT
+    sql_res.clear();
+    var q_csv_ok = db::query_raw(db_handle, "SELECT id, name, score FROM sql_test_items ORDER BY id ASC;", "csv", sql_res);
+    assert(q_csv_ok);
+    assert(sql_res == "id,name,score\n1,\"Alice\",95.5\n2,\"Bob\",88\n");
+
+    // 6f. SQL Error handling
+    sql_res.clear();
+    var q_err_ok = db::query_raw(db_handle, "SELECT * FROM missing_table_123;", "json", sql_res);
+    assert(!q_err_ok);
+    assert(sql_res == "{\"status\":\"error\",\"error\":\"no such table: missing_table_123\"}");
+
+    print("  [PASS] SQL Query Engine (JSON, Table, CSV, DDL/DML, Error Handling)");
+
+    // 7. Test Model Context Protocol (MCP) Server Handler
+    print("[TEST 7] Testing Model Context Protocol (MCP) Server Handler...");
+    var mcp_cfg = types::NodeConfig {
+        id: "mcp-test-node",
+        name: "MCP Test Node",
+        db_path: "data/unit_test.db",
+        wal: true,
+        replication_port: 0,
+        swarm_topic: "test-topic",
+        key_registry_path: "",
+        encryption_key: "",
+        enable_crypto: false,
+        sync_interval_sec: 2,
+        auto_sync: true,
+        mcp_mode: true
+    };
+    var mcp_rep = replicator::init_replicator(db_handle, 0);
+    var mcp_ctx = cli::AppContext {
+        cfg: mcp_cfg,
+        db_handle: db_handle,
+        rep: mcp_rep,
+        should_exit: false
+    };
+
+    var mcp_resp: u8[>..] = [];
+
+    // 7a. initialize
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\"}}", mcp_resp));
+    assert(str_contains(mcp_resp, "\"protocolVersion\":\"2024-11-05\""));
+    assert(str_contains(mcp_resp, "\"name\":\"goose-sql-p2p\""));
+
+    // 7b. ping
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}", mcp_resp));
+    assert(mcp_resp == "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{}}");
+
+    // 7c. tools/list
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\"}", mcp_resp));
+    assert(str_contains(mcp_resp, "\"name\":\"sql\""));
+    assert(str_contains(mcp_resp, "\"name\":\"put\""));
+    assert(str_contains(mcp_resp, "\"name\":\"get\""));
+    assert(str_contains(mcp_resp, "\"name\":\"del\""));
+    assert(str_contains(mcp_resp, "\"name\":\"list\""));
+    assert(str_contains(mcp_resp, "\"name\":\"sync\""));
+    assert(str_contains(mcp_resp, "\"name\":\"peers\""));
+    assert(str_contains(mcp_resp, "\"name\":\"feed\""));
+    assert(str_contains(mcp_resp, "\"name\":\"status\""));
+
+    // 7d. tools/call sql
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"sql\",\"arguments\":{\"query\":\"SELECT 42 as answer;\",\"format\":\"json\"}}}", mcp_resp));
+    assert(str_contains(mcp_resp, "[{\\\"answer\\\":42}]"));
+
+    // 7e. tools/call put
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"put\",\"arguments\":{\"key\":\"mcp_crm_1\",\"data\":\"{\\\"name\\\":\\\"Acme Corp\\\"}\"}}}", mcp_resp));
+    assert(str_contains(mcp_resp, "OK put mcp_crm_1"));
+
+    // 7f. tools/call get
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"get\",\"arguments\":{\"key\":\"mcp_crm_1\"}}}", mcp_resp));
+    assert(str_contains(mcp_resp, "Acme Corp"));
+
+    // 7g. tools/call status
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"status\"}}", mcp_resp));
+    assert(str_contains(mcp_resp, "mcp-test-node"));
+
+    // 7h. resources/list
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"resources/list\"}", mcp_resp));
+    assert(str_contains(mcp_resp, "sqlite://crm_store"));
+    assert(str_contains(mcp_resp, "sqlite://feed"));
+
+    // 7i. resources/read
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"resources/read\",\"params\":{\"uri\":\"sqlite://status\"}}", mcp_resp));
+    assert(str_contains(mcp_resp, "mcp-test-node"));
+
+    // 7j. prompts/list
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"prompts/list\"}", mcp_resp));
+    assert(str_contains(mcp_resp, "p2p_sync_diagnostic"));
+    assert(str_contains(mcp_resp, "sql_data_analyst"));
+
+    // 7k. prompts/get
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"prompts/get\",\"params\":{\"name\":\"sql_data_analyst\",\"arguments\":{\"focus\":\"crm_revenue\"}}}", mcp_resp));
+    assert(str_contains(mcp_resp, "SELECT * FROM crm_store"));
+
+    // 7l. error on unknown method
+    mcp_resp.clear();
+    assert(mcp::handle_request(mcp_ctx, "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"unknown/method\"}", mcp_resp));
+    assert(str_contains(mcp_resp, "\"code\":-32601"));
+
+    print("  [PASS] Model Context Protocol (MCP) Server (Initialize, Tools, Resources, Prompts, Error Handling)");
 
     db::close(db_handle);
-    print("  [PASS] Changeset Feed Append and SHA-256 Log Hashing");
 
     print("=== ALL UNIT TESTS PASSED SUCCESSFULLY! ===");
 }

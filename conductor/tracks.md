@@ -2,7 +2,7 @@
 
 ## Active Tracks
 
-### [ ] Track: Model Context Protocol (MCP) Server over STDIO (`mcp_server`)
+### [x] Track: Model Context Protocol (MCP) Server over STDIO (`mcp_server`)
 * **ID**: mcp_server
 * **Folder**: [tracks/mcp_server](tracks/mcp_server)
 * **Plan**: [tracks/mcp_server/plan.md](tracks/mcp_server/plan.md)

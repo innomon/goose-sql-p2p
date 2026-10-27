@@ -93,6 +93,39 @@ FEED_G1=$("$GOOSE_BIN" -db "$DB_G1" -cmd "feed")
 echo "Goose Node 1 feed entries: $FEED_G1"
 echo "  [PASS] List and Changeset Feed Verified!"
 
+# 8. Test Arbitrary SQL Command Execution (JSON, Table, CSV, Slash Command)
+echo "[Step 10] Testing 'sql' and '/sql' execution across formats..."
+SQL_JSON=$("$GOOSE_BIN" -db "$DB_G1" -cmd "sql SELECT key, data FROM crm_store ORDER BY key ASC;")
+echo "SQL JSON output: $SQL_JSON"
+if [[ "$SQL_JSON" != *"org:acme"* || "$SQL_JSON" != *"user:102"* ]]; then
+  echo "[FAIL] SQL JSON query failed!"
+  exit 1
+fi
+
+SQL_TABLE=$("$GOOSE_BIN" -db "$DB_G1" -cmd "sql -f table SELECT key, data FROM crm_store ORDER BY key ASC;")
+echo "SQL Table output:"
+echo "$SQL_TABLE"
+if [[ "$SQL_TABLE" != *"+---"* || "$SQL_TABLE" != *"AcmeCorp"* ]]; then
+  echo "[FAIL] SQL Table query failed!"
+  exit 1
+fi
+
+SQL_CSV=$("$GOOSE_BIN" -db "$DB_G1" -cmd "sql --format csv SELECT key, data FROM crm_store ORDER BY key ASC;")
+echo "SQL CSV output:"
+echo "$SQL_CSV"
+if [[ "$SQL_CSV" != *"key,data"* || "$SQL_CSV" != *"\"AcmeCorp\""* ]]; then
+  echo "[FAIL] SQL CSV query failed!"
+  exit 1
+fi
+
+SLASH_SQL=$("$GOOSE_BIN" -db "$DB_G1" -cmd "/sql SELECT count(*) AS cnt FROM crm_store;")
+echo "Slash SQL output: $SLASH_SQL"
+if [[ "$SLASH_SQL" != *"\"cnt\":"* ]]; then
+  echo "[FAIL] Slash /sql query failed!"
+  exit 1
+fi
+echo "  [PASS] Arbitrary SQL Execution across formats Verified!"
+
 echo "================================================================="
 echo "  ALL REPLICATION AND INTEROPERABILITY TESTS PASSED!"
 echo "================================================================="

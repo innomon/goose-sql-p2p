@@ -10,6 +10,7 @@ extern fn db_put_c(handle: u64, key: const u8[:], meta: const u8[:], data: const
 extern fn db_get_c(handle: u64, key: const u8[:], out_meta: u8[>..]&, out_data: u8[>..]&) -> i32 = "gs_db_get";
 extern fn db_delete_c(handle: u64, key: const u8[:]) -> i32 = "gs_db_delete";
 extern fn db_list_c(handle: u64, prefix: const u8[:], limit: i32, offset: i32, out_json: u8[>..]&) -> i32 = "gs_db_list";
+extern fn db_query_raw_c(handle: u64, sql: const u8[:], format: const u8[:], out_result: u8[>..]&) -> i32 = "gs_db_query_raw";
 
 fn open(path: const u8[:], wal: bool) -> u64 {
     var handle: u64 = 0;
@@ -66,6 +67,13 @@ fn list(handle: u64, prefix: const u8[:], limit: i32, offset: i32, out_json: u8[
         return false;
     }
     return db_list_c(handle, prefix, limit, offset, out_json) == 0;
+}
+
+fn query_raw(handle: u64, sql: const u8[:], format: const u8[:], out_result: u8[>..]&) -> bool {
+    if handle == 0 {
+        return false;
+    }
+    return db_query_raw_c(handle, sql, format, out_result) == 0;
 }
 
 fn init_feed_table(handle: u64) -> bool {

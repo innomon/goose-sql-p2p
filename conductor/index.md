@@ -14,7 +14,8 @@
 - [Goose & C Style Guide](code_styleguides/goose.md)
 
 ## Active Tracks
-- [core_engine: Core SQLite C Integration, Config Compatibility & Pear P2P Replication Engine](tracks/core_engine/plan.md)
+- [mcp_server: Model Context Protocol (MCP) Server over STDIO](tracks/mcp_server/plan.md)
 
-## Completed Tracks
-- None
+## Archived Tracks
+- [core_engine: Core SQLite C Integration, Config Compatibility & Pear P2P Replication Engine](tracks/archive/core_engine/plan.md)
+- [sql_command: Arbitrary SQL Execution Command (`sql` and `/sql`)](tracks/archive/sql_command/plan.md)
